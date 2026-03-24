@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use crate::auth;
 use crate::risk;
 use crate::storage;
 use soroban_sdk::{
@@ -23,6 +24,60 @@ fn setup_signal(_env: &Env, signal_id: u64, expiry: u64) -> storage::Signal {
         expiry,
         base_asset: 1,
     }
+}
+
+#[test]
+fn test_risk_parity_rebalance() {
+    let env = setup_env();
+    let contract_id = env.register(AutoTradeContract, ());
+    let user = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        // Setup 2 assets: Asset 1 (Low Vol), Asset 2 (High Vol)
+        // Record some prices to establish volatility
+        for i in 0..10 {
+            // Asset 1: Stable at 100
+            AutoTradeContract::record_asset_price(env.clone(), 1, 100);
+            // Asset 2: Volatile swings between 90 and 110
+            let p2 = if i % 2 == 0 { 90 } else { 110 };
+            AutoTradeContract::record_asset_price(env.clone(), 2, p2);
+        }
+
+        // Initial positions: Equal XLM value
+        // Asset 1: 10 units @ 100 = 1000 XLM
+        risk::update_position(&env, &user, 1, 10, 100);
+        // Asset 2: 10 units @ 100 = 1000 XLM
+        risk::update_position(&env, &user, 2, 10, 100);
+
+        // Enable Risk Parity
+        let _ = AutoTradeContract::set_risk_parity_config(env.clone(), user.clone(), true, 0, 1);
+
+        // Preview rebalance
+        let (risks, trades) = AutoTradeContract::preview_risk_parity_rebalance(env.clone(), user.clone()).unwrap();
+        
+        // Asset 1 (stable) should have lower vol than Asset 2
+        let r1 = risks.iter().find(|r| r.asset_id == 1).unwrap();
+        let r2 = risks.iter().find(|r| r.asset_id == 2).unwrap();
+        assert!(r1.volatility_bps < r2.volatility_bps, "Asset 1 should be less volatile");
+
+        // Risk parity should recommend SELLING Asset 2 (high risk) and BUYING Asset 1 (low risk)
+        assert!(trades.len() >= 2);
+        let t1 = trades.iter().find(|t| t.asset_id == 1).unwrap();
+        let t2 = trades.iter().find(|t| t.asset_id == 2).unwrap();
+        assert!(t1.is_buy, "Should buy low-vol asset");
+        assert!(!t2.is_buy, "Should sell high-vol asset");
+
+        // Execute rebalance
+        AutoTradeContract::trigger_risk_parity_rebalance(env.clone(), user.clone()).unwrap();
+
+        // Verify new positions
+        let portfolio = AutoTradeContract::get_portfolio(env.clone(), user.clone());
+        let p1 = portfolio.assets.iter().find(|a| a.asset_id == 1).unwrap();
+        let p2 = portfolio.assets.iter().find(|a| a.asset_id == 2).unwrap();
+
+        assert!(p1.amount > 10, "Asset 1 amount should increase");
+        assert!(p2.amount < 10, "Asset 2 amount should decrease");
+    });
 }
 
 #[test]
@@ -112,7 +167,7 @@ fn test_execute_trade_insufficient_balance() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &50i128);
@@ -139,7 +194,7 @@ fn test_execute_trade_market_full_fill() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &500i128);
@@ -172,7 +227,7 @@ fn test_execute_trade_market_partial_fill() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &500i128);
@@ -205,7 +260,7 @@ fn test_execute_trade_limit_filled() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &500i128);
@@ -238,7 +293,7 @@ fn test_execute_trade_limit_not_filled() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &500i128);
@@ -271,7 +326,7 @@ fn test_get_trade_existing() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &500i128);
@@ -361,7 +416,7 @@ fn test_position_limit_allows_first_trade() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &1000i128);
@@ -392,7 +447,7 @@ fn test_get_user_positions() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &1000i128);
@@ -453,7 +508,7 @@ fn test_get_trade_history_paginated() {
     // Setup (max_position_pct: 100 so multiple buys in same asset pass risk checks)
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         risk::set_risk_config(
             &env,
             &user,
@@ -517,7 +572,7 @@ fn test_get_portfolio() {
 
     env.as_contract(&contract_id, || {
         storage::set_signal(&env, signal_id, &signal);
-        storage::authorize_user(&env, &user);
+        auth::grant_authorization(&env, &user, 1000000, 30).unwrap();
         env.storage()
             .temporary()
             .set(&(user.clone(), symbol_short!("balance")), &1000i128);
