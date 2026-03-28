@@ -1,3 +1,2 @@
-pub mod momentum;
-pub mod sentiment;
+pub mod grid;
 pub mod stat_arb;

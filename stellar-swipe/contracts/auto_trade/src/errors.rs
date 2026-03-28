@@ -1,5 +1,6 @@
 use soroban_sdk::contracterror;
 
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum AutoTradeError {
@@ -13,19 +14,24 @@ pub enum AutoTradeError {
     PositionLimitExceeded = 8,
     StopLossTriggered = 9,
     TradingPaused = 10,
-
-    StrategyNotFound = 10,
-    PositionAlreadyExists = 11,
-    InsufficientPriceHistory = 12,
-    RankingDisabled = 13,
-
-    InvalidBasketSize = 10,
-    InsufficientPriceHistory = 11,
-    InvalidPriceData = 12,
-    NonCointegratedBasket = 13,
-    ActivePortfolioExists = 14,
-    NoActivePortfolio = 15,
-    NoTradeSignal = 16,
-    InvalidStatArbConfig = 17,
- 
+    StrategyNotFound = 11,
+    PositionAlreadyExists = 12,
+    InsufficientPriceHistory = 13,
+    RankingDisabled = 14,
+    InvalidBasketSize = 15,
+    InvalidPriceData = 16,
+    NonCointegratedBasket = 17,
+    ActivePortfolioExists = 18,
+    NoActivePortfolio = 19,
+    NoTradeSignal = 20,
+    InvalidStatArbConfig = 21,
+    InvalidInsuranceConfig = 22,
+    InsuranceNotConfigured = 23,
+    SelfReferral = 24,
+    ReferralAlreadySet = 25,
+    CircularReferral = 26,
+    ReferralLimitExceeded = 27,
+    SlippageExceeded = 28,
+    RoutingPlanNotFound = 29,
+    AtomicExecutionFailed = 30,
 }
