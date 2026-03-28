@@ -1,5 +1,9 @@
 #![no_std]
 
+mod analytics;
+
+pub use analytics::{AnalyticsPeriod, FeeAnalytics};
+
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
@@ -40,6 +44,8 @@ pub enum StorageKey {
     FeeExemptList,
     /// Running total of `provider_share` not yet claimed (per provider + token).
     ProviderPendingFees(ProviderPendingKey),
+    /// Temporary analytics bucket: fees for UTC day `timestamp / 86400` (~30-day TTL).
+    DailyFees(u64),
 }
 
 #[contracterror]
@@ -293,6 +299,8 @@ impl FeeCollector {
                 treasury_share,
             }
             .publish(&env);
+
+            analytics::record_daily_fee_collection(&env, fee, token.clone());
         }
 
         FeeCollected {
@@ -346,12 +354,18 @@ impl FeeCollector {
             .get(&StorageKey::AccumulatedFees(token))
             .unwrap_or(0)
     }
+
+    pub fn get_fee_analytics(env: Env, period: AnalyticsPeriod) -> FeeAnalytics {
+        analytics::get_fee_analytics(&env, period)
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use crate::analytics;
+    use soroban_sdk::testutils::storage::Temporary as _;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
     use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 
     /// 7 decimals (e.g. XLM-style) for “100 XLM” style tests.
@@ -528,5 +542,119 @@ mod test {
         client.initialize(&admin, &treasury);
         let res = client.try_set_provider_fee_share_bps(&10_001u32);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn fee_analytics_daily_accumulates_same_day() {
+        let env = Env::default();
+        let (_admin, _treasury, token, payer, client) = setup_fee_collector(&env);
+        let provider = Address::generate(&env);
+        let base_day: u64 = 12_345;
+        env.ledger()
+            .set_timestamp(base_day * analytics::SECONDS_PER_DAY + 100);
+
+        let trade_amount = 1_000_000i128;
+        client.collect_fee(&payer, &trade_amount, &token, &provider);
+        client.collect_fee(&payer, &trade_amount, &token, &provider);
+
+        let a = client.get_fee_analytics(&AnalyticsPeriod::Daily);
+        assert_eq!(a.total_fees, 2_000);
+        assert_eq!(a.trade_count, 2);
+        assert_eq!(a.avg_fee_per_trade, 1_000);
+        assert_eq!(a.top_token, token);
+    }
+
+    #[test]
+    fn fee_analytics_ten_days_weekly_sums_last_seven() {
+        let env = Env::default();
+        let (_admin, _treasury, token, payer, client) = setup_fee_collector(&env);
+        let provider = Address::generate(&env);
+        const BASE_DAY: u64 = 50_000;
+        const FEE: i128 = 1_000;
+        let trade_amount = 1_000_000i128;
+
+        for d in 0..10_u64 {
+            env.ledger().set_timestamp(BASE_DAY * analytics::SECONDS_PER_DAY + d * analytics::SECONDS_PER_DAY + 200);
+            assert_eq!(
+                client.collect_fee(&payer, &trade_amount, &token, &provider),
+                FEE
+            );
+        }
+
+        env.ledger().set_timestamp(BASE_DAY * analytics::SECONDS_PER_DAY + 9 * analytics::SECONDS_PER_DAY + 200);
+
+        let w = client.get_fee_analytics(&AnalyticsPeriod::Weekly);
+        assert_eq!(w.total_fees, 7 * FEE);
+        assert_eq!(w.trade_count, 7);
+        assert_eq!(w.avg_fee_per_trade, FEE);
+        assert_eq!(w.top_token, token);
+
+        let d = client.get_fee_analytics(&AnalyticsPeriod::Daily);
+        assert_eq!(d.total_fees, FEE);
+        assert_eq!(d.trade_count, 1);
+
+        let m = client.get_fee_analytics(&AnalyticsPeriod::Monthly);
+        assert_eq!(m.total_fees, 10 * FEE);
+        assert_eq!(m.trade_count, 10);
+    }
+
+    #[test]
+    fn fee_analytics_skips_exempt_trades() {
+        let env = Env::default();
+        let (_admin, _treasury, token, payer, client) = setup_fee_collector(&env);
+        let provider = Address::generate(&env);
+        env.ledger().set_timestamp(60_000 * analytics::SECONDS_PER_DAY + 50);
+        client.collect_fee(&payer, &1_000_000i128, &token, &provider);
+        client.add_fee_exempt(&payer);
+        client.collect_fee(&payer, &1_000_000i128, &token, &provider);
+
+        let a = client.get_fee_analytics(&AnalyticsPeriod::Daily);
+        assert_eq!(a.total_fees, 1_000);
+        assert_eq!(a.trade_count, 1);
+    }
+
+    #[test]
+    fn daily_fee_temporary_bucket_ttl_set() {
+        let env = Env::default();
+        let (_admin, _treasury, token, payer, client) = setup_fee_collector(&env);
+        let provider = Address::generate(&env);
+        env.ledger().set_timestamp(70_000 * analytics::SECONDS_PER_DAY + 99);
+        client.collect_fee(&payer, &1_000_000i128, &token, &provider);
+
+        let day = env.ledger().timestamp() / analytics::SECONDS_PER_DAY;
+        let cid = client.address.clone();
+        let ttl = env.as_contract(&cid, || env.storage().temporary().get_ttl(&StorageKey::DailyFees(day)));
+        assert!(ttl > 0);
+        assert!(ttl <= analytics::TEMP_FEE_BUCKET_TTL_LEDGERS);
+    }
+
+    #[test]
+    fn daily_fee_temporary_bucket_expires_past_ttl_ledgers() {
+        let env = Env::default();
+        let (_admin, _treasury, token, payer, client) = setup_fee_collector(&env);
+        let provider = Address::generate(&env);
+
+        let mut li = env.ledger().get();
+        li.max_entry_ttl = 2_000_000;
+        env.ledger().set(li.clone());
+
+        env.ledger().set_timestamp(80_000 * analytics::SECONDS_PER_DAY + 1);
+        client.collect_fee(&payer, &1_000_000i128, &token, &provider);
+        let day = env.ledger().timestamp() / analytics::SECONDS_PER_DAY;
+        let cid = client.address.clone();
+
+        env.as_contract(&cid, || {
+            assert!(env.storage().temporary().has(&StorageKey::DailyFees(day)));
+        });
+
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(analytics::TEMP_FEE_BUCKET_TTL_LEDGERS)
+            .saturating_add(50_000);
+        env.ledger().set(li);
+
+        env.as_contract(&cid, || {
+            assert!(!env.storage().temporary().has(&StorageKey::DailyFees(day)));
+        });
     }
 }
