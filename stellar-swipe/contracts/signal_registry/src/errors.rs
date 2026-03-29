@@ -16,6 +16,7 @@ pub enum AdminError {
     DuplicateSigner = 10,
     InvalidAssetPair = 11,
     CannotFollowSelf = 12,
+    RateLimitExceeded = 13,
     InvalidTimestamp = 16,
     ScheduleTooFarFuture = 17,
     ScheduleLimitReached = 18,

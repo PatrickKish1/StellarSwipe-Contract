@@ -15,9 +15,17 @@ pub enum AutoTradeError {
     TradingPaused = 10,
     StrategyNotFound = 11,
     PositionAlreadyExists = 12,
+ Updated upstream
     RankingDisabled = 13,
     InvalidBasketSize = 14,
     InsufficientPriceHistory = 15,
+ main
+
+    InsufficientPriceHistory = 13,
+    RankingDisabled = 14,
+    InvalidBasketSize = 15,
+ Stashed changes
+
     DcaStrategyNotFound = 10,
     DcaStrategyInactive = 11,
     DcaEndTimeReached = 12,
@@ -91,6 +99,7 @@ feature/dca-strategy
     InvalidBasketSize = 14,
     InsufficientPriceHistory = 15,
  main
+ main
     InvalidPriceData = 16,
     NonCointegratedBasket = 17,
     ActivePortfolioExists = 18,
@@ -98,9 +107,14 @@ feature/dca-strategy
     NoTradeSignal = 20,
     InvalidStatArbConfig = 21,
     ExitStrategyNotFound = 22,
+ Updated upstream
     InvalidExitConfig = 23,
     InsuranceNotConfigured = 24,
     InvalidInsuranceConfig = 25,
+ main
+
+ Stashed changes
+
  feat/smart-order-routing-84
     InvalidInsuranceConfig = 22,
     InsuranceNotConfigured = 23,
@@ -148,6 +162,7 @@ feature/dca-strategy
  main
  main
 main
+ main
  main
  main
  main

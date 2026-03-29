@@ -34,6 +34,24 @@ pub fn authorize_user(env: &Env, user: &Address) {
         .set(&(user.clone(), symbol_short!("balance")), &i128::MAX);
 }
 
+<<<<<<< Updated upstream
+=======
+/// Authorize a user with default limits (test helper).
+#[cfg(test)]
+pub fn authorize_user(env: &Env, user: &Address) {
+    let config = AuthConfig {
+        authorized: true,
+        max_trade_amount: 1_000_000_000_000,
+        expires_at: env.ledger().timestamp() + (30 * 86400),
+        granted_at: env.ledger().timestamp(),
+    };
+    env.storage()
+        .persistent()
+        .set(&AuthKey::Authorization(user.clone()), &config);
+}
+
+/// Authorize a user with explicit limits.
+>>>>>>> Stashed changes
 pub fn authorize_user_with_limits(
     env: &Env,
     user: &Address,
@@ -58,9 +76,12 @@ pub fn revoke_user_authorization(env: &Env, user: &Address) {
     env.storage()
         .persistent()
         .remove(&AuthKey::Authorization(user.clone()));
+<<<<<<< Updated upstream
 }
 
 #[cfg(test)]
 pub fn authorize_user(env: &Env, user: &Address) {
     authorize_user_with_limits(env, user, 1_000_000_000_000, 30);
+=======
+>>>>>>> Stashed changes
 }

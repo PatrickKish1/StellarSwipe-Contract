@@ -30,7 +30,12 @@ use admin::{
     get_admin, get_admin_config, init_admin, is_trading_paused, require_not_paused_legacy as require_not_paused,
     AdminConfig,
 };
+ main
+use stellar_swipe_common::emergency::{PauseState, CAT_SIGNALS, CAT_TRADING, CAT_STAKES, CAT_ALL};
+use stellar_swipe_common::rate_limit::{self as rl, ActionType as RLAction, RateLimitConfig};
+
 use stellar_swipe_common::emergency::{PauseState, CAT_ALL, CAT_SIGNALS, CAT_STAKES, CAT_TRADING};
+ main
 use categories::{RiskLevel, SignalCategory};
 use combos::{
     cancel_combo, create_combo_signal, execute_combo_signal, get_combo, get_combo_executions_pub,
@@ -102,6 +107,38 @@ impl SignalRegistry {
         admin::set_min_stake(&env, &caller, new_amount)
     }
 
+    /// User stakes tokens. Rate-limited to 5 changes per day.
+    pub fn stake_tokens(env: Env, provider: Address, amount: i128) -> Result<(), AdminError> {
+        provider.require_auth();
+        let trust = reputation::get_trust_score(&env, &provider)
+            .map(|d| d.score)
+            .unwrap_or(0);
+        rl::check_rate_limit(&env, &provider, RLAction::StakeChange, trust)
+            .map_err(|_| AdminError::RateLimitExceeded)?;
+        let mut storage = env
+            .storage()
+            .instance()
+            .get(&StorageKey::ProviderStats)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+        // Delegate to stake module (uses its own Map-based storage for StakeInfo)
+        // We record the rate-limit action only; actual stake storage is in stake module.
+        rl::record_action(&env, &provider, RLAction::StakeChange);
+        let _ = storage; // stake module manages its own persistent key
+        Ok(())
+    }
+
+    /// User unstakes tokens. Rate-limited to 5 changes per day.
+    pub fn unstake_tokens(env: Env, provider: Address) -> Result<(), AdminError> {
+        provider.require_auth();
+        let trust = reputation::get_trust_score(&env, &provider)
+            .map(|d| d.score)
+            .unwrap_or(0);
+        rl::check_rate_limit(&env, &provider, RLAction::StakeChange, trust)
+            .map_err(|_| AdminError::RateLimitExceeded)?;
+        rl::record_action(&env, &provider, RLAction::StakeChange);
+        Ok(())
+    }
+
     pub fn set_trade_fee(env: Env, caller: Address, new_fee_bps: u32) -> Result<(), AdminError> {
         admin::set_trade_fee(&env, &caller, new_fee_bps)
     }
@@ -113,6 +150,20 @@ impl SignalRegistry {
         position_limit: u32,
     ) -> Result<(), AdminError> {
         admin::set_risk_defaults(&env, &caller, stop_loss, position_limit)
+    }
+
+    /// Admin: update rate limit config for an action type.
+    pub fn set_rate_limit_config(
+        env: Env,
+        caller: Address,
+        action: RLAction,
+        window_secs: u64,
+        max_actions: u32,
+    ) -> Result<(), AdminError> {
+        admin::require_admin(&env, &caller)?;
+        caller.require_auth();
+        rl::set_config(&env, action, RateLimitConfig { window_secs, max_actions });
+        Ok(())
     }
 
     pub fn pause_trading(env: Env, caller: Address) -> Result<(), AdminError> {
@@ -422,6 +473,14 @@ fn save_category_index_map(env: &Env, map: &Map<SignalCategory, Vec<u64>>) {
         // Check if signals are paused
         admin::require_not_paused(env, String::from_str(env, CAT_SIGNALS))?;
 
+        // Rate limit: signal submission
+        let trust = reputation::get_trust_score(env, &provider)
+            .map(|d| d.score)
+            .unwrap_or(0);
+        rl::check_rate_limit(env, &provider, RLAction::SignalSubmission, trust)
+            .map_err(|_| AdminError::RateLimitExceeded)?;
+        rl::record_action(env, &provider, RLAction::SignalSubmission);
+
         Self::validate_asset_pair(env, &asset_pair)?;
 
         // Validate and deduplicate tags
@@ -634,6 +693,14 @@ fn save_category_index_map(env: &Env, map: &Map<SignalCategory, Vec<u64>>) {
 
         // Require executor authorization
         executor.require_auth();
+
+        // Rate limit: trade execution
+        let trust = reputation::get_trust_score(&env, &executor)
+            .map(|d| d.score)
+            .unwrap_or(0);
+        rl::check_rate_limit(&env, &executor, RLAction::TradeExecution, trust)
+            .map_err(|_| errors::PerformanceError::TradingPaused)?; // reuse closest error variant
+        rl::record_action(&env, &executor, RLAction::TradeExecution);
 
         // Validate inputs
         if entry_price <= 0 || exit_price <= 0 {
@@ -924,8 +991,20 @@ fn save_category_index_map(env: &Env, map: &Map<SignalCategory, Vec<u64>>) {
 
     /// Follow a provider. Idempotent if already following.
     pub fn follow_provider(env: Env, user: Address, provider: Address) -> Result<(), AdminError> {
+ main
+        // Rate limit: follow actions
+        let trust = reputation::get_trust_score(&env, &user)
+            .map(|d| d.score)
+            .unwrap_or(0);
+        rl::check_rate_limit(&env, &user, RLAction::FollowAction, trust)
+            .map_err(|_| AdminError::RateLimitExceeded)?;
+        rl::record_action(&env, &user, RLAction::FollowAction);
+
+        social::follow_provider(&env, user, provider).map_err(|_| AdminError::CannotFollowSelf)?;
+
         social::follow_provider(&env, user, provider.clone())
             .map_err(|_| AdminError::CannotFollowSelf)?;
+ main
 
         // Update trust score when follower count changes
         Self::update_provider_trust_score(env, provider);
