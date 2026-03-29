@@ -71,11 +71,9 @@ feature/dca-strategy
  main
 
     TradingPaused = 10,
-
     StrategyNotFound = 11,
     PositionAlreadyExists = 12,
     RankingDisabled = 13,
-
     InvalidBasketSize = 14,
     InsufficientPriceHistory = 15,
     InvalidPriceData = 16,
@@ -84,45 +82,28 @@ feature/dca-strategy
     NoActivePortfolio = 19,
     NoTradeSignal = 20,
     InvalidStatArbConfig = 21,
-    
-    // Pairs Trading
     PairsStrategyNotFound = 22,
     PairsActivePositionExists = 23,
     PairsNoActivePosition = 24,
     InsufficientCorrelation = 25,
     PairNotCointegrated = 26,
     InvalidPairsConfig = 27,
- 
- main
-    // Arbitrage
     ArbitrageOpportunityExpired = 28,
     ArbitrageUnprofitable = 29,
     ArbTooLarge = 30,
     FrontRunningRisk = 31,
-
-    // Insurance
     InvalidInsuranceConfig = 32,
     InsuranceNotConfigured = 33,
-
-    // Referral
     SelfReferral = 34,
     ReferralAlreadySet = 35,
     CircularReferral = 36,
     ReferralLimitExceeded = 37,
-
- TWAP-Orders
-    // TWAP
     InvalidTWAPDuration = 38,
     TWAPOrderNotFound = 39,
     NotTWAPOwner = 40,
     TWAPNotActive = 41,
-
-Correlation-Based-Risk
-    // Correlation
     CorrelationLimitExceeded = 42,
     TooManyCorrelatedPositions = 43,
-
-    // Conditional Orders
     ConditionalOrderNotFound = 44,
     ConditionalOrderNotPending = 45,
     ConditionalOrderNotTriggered = 46,
